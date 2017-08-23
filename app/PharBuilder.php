@@ -4,6 +4,7 @@
 namespace MacFJA\PharBuilder;
 
 use MacFJA\PharBuilder\Utils\Composer;
+use MacFJA\PharBuilder\Utils\Config;
 use Rych\ByteSize\ByteSize;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Finder\Finder;
@@ -20,29 +21,24 @@ use webignition\ReadableDuration\ReadableDuration;
 class PharBuilder
 {
     /**
+     * The configurations holder
+     *
+     * @var Config
+     */
+    protected $config;
+
+    /**
      * The Phar object
      *
      * @var \Phar
      */
-    protected $phar;
-    /**
-     * The path of phar file
-     *
-     * @var string
-     */
-    protected $pharName = '';
+    protected $phar = null;
     /**
      * The path of the entry point of the application
      *
      * @var string
      */
-    protected $stubFile;
-    /**
-     * The name of the phar inside the application
-     *
-     * @var string
-     */
-    protected $alias;
+    protected $stubFile = '';
     /**
      * The Symfony Style Input/Output
      *
@@ -50,29 +46,11 @@ class PharBuilder
      */
     protected $ioStyle;
     /**
-     * The compression type (see `$compressionList`)
-     *
-     * @var int
-     */
-    protected $compression = \Phar::NONE;
-    /**
-     * List of directories to include
-     *
-     * @var string[]
-     */
-    protected $includes = array();
-    /**
-     * Keep require-dev only package?
-     *
-     * @var bool
-     */
-    protected $keepDev = false;
-    /**
      * The composer file reader
      *
      * @var Composer
      */
-    protected $composerReader;
+    protected $composerReader = null;
 
     /**
      * List of equivalence for compression
@@ -80,18 +58,20 @@ class PharBuilder
      * @var array
      */
     private $compressionList = array(
-        'no' => \Phar::NONE,
-        'none' => \Phar::NONE,
-        'gzip' => \Phar::GZ,
-        'bzip2' => \Phar::BZ2,
+        Config\Compression::NO => \Phar::NONE,
+        Config\Compression::GZIP => \Phar::GZ,
+        Config\Compression::BZIP2 => \Phar::BZ2,
     );
-    
+
     /**
-     * Skip the shebang?
+     * Get the path of the generated PHAR
      *
-     * @var bool
+     * @return string
      */
-    protected $skipShebang = false;
+    public function getPharPath()
+    {
+        return $this->getOutputDir().DIRECTORY_SEPARATOR.$this->getPharName();
+    }
 
     /**
      * Get the name of the PHAR
@@ -100,7 +80,7 @@ class PharBuilder
      */
     public function getPharName()
     {
-        return $this->alias;
+        return $this->config->getValue('name');
     }
 
     /**
@@ -110,37 +90,10 @@ class PharBuilder
      */
     public function getOutputDir()
     {
-        return dirname($this->pharName);
+        return rtrim($this->config->getValue('output-dir'), DIRECTORY_SEPARATOR);
     }
 
-    /**
-     * Set the output directory path
-     *
-     * @param string $directory The output directory path
-     *
-     * @return void
-     */
-    public function setOutputDir($directory)
-    {
-        $this->pharName = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . basename($this->pharName);
-    }
 
-    /**
-     * Set the name of the PHAR
-     *
-     * @param string $pharName The name
-     *
-     * @return void
-     */
-    public function setPharName($pharName)
-    {
-        if (empty($this->alias)) {
-            $this->pharName .= $pharName;
-        } else {
-            $this->pharName = dirname($this->pharName) . DIRECTORY_SEPARATOR . $pharName;
-        }
-        $this->alias = $pharName;
-    }
 
     /**
      * Get the path of the stub (entry-point)
@@ -149,44 +102,21 @@ class PharBuilder
      */
     public function getStubFile()
     {
-        return $this->stubFile;
+        return $this->config->getValue('entry-point');
     }
 
-    /**
-     * Set the path of the stub (entry-point)
-     *
-     * @param string $stubFile The path
-     *
-     * @return void
-     */
-    public function setStubFile($stubFile)
-    {
-        $this->stubFile = $stubFile;
-    }
 
     /**
-     * Get the compression name
+     * Get the compression name.
+     * The compression type (see `$compressionList`)
      *
      * @return string
      */
     public function getCompression()
     {
-        return array_search($this->compression, $this->compressionList, true);
+        return array_search($this->config->getValue('compression'), $this->compressionList, true);
     }
 
-    /**
-     * Set the compression
-     *
-     * @param string $compression The compression name
-     *
-     * @return void
-     */
-    public function setCompression($compression)
-    {
-        $compression       = strtolower($compression);
-        $this->compression = array_key_exists($compression, $this->compressionList) ?
-            $this->compressionList[$compression] : \Phar::NONE;
-    }
 
     /**
      * Get the list of path that will be included
@@ -195,20 +125,9 @@ class PharBuilder
      */
     public function getIncludes()
     {
-        return $this->includes;
+        return $this->config->getValue('includes');
     }
 
-    /**
-     * Set the list of path that will be included
-     *
-     * @param \string[] $includes The list of path
-     *
-     * @return void
-     */
-    public function setIncludes($includes)
-    {
-        $this->includes = $includes;
-    }
 
     /**
      * Indicate if dev source/package must be added to the PHAR
@@ -217,20 +136,9 @@ class PharBuilder
      */
     public function isKeepDev()
     {
-        return $this->keepDev;
+        return $this->config->getValue('include-dev');
     }
 
-    /**
-     * Indicate if dev source/package must be added to the PHAR
-     *
-     * @param boolean $keepDev The value
-     *
-     * @return void
-     */
-    public function setKeepDev($keepDev)
-    {
-        $this->keepDev = $keepDev;
-    }
 
     /**
      * Set the path the composer.json file
@@ -253,19 +161,7 @@ class PharBuilder
     {
         return $this->composerReader;
     }
-    
-    /**
-     * Sets the skip shebang flag.
-     *
-     * @param bool $skipShebang skip the shebang or not
-     *
-     * @return void
-     */
-    public function setSkipShebang($skipShebang)
-    {
-        $this->skipShebang = (bool) $skipShebang;
-    }
-    
+
     /**
      * Indicates whether the shebang should be skipped or not.
      *
@@ -273,45 +169,19 @@ class PharBuilder
      */
     public function isSkipShebang()
     {
-        return $this->skipShebang;
+        return $this->config->getValue('shebang');
     }
 
     /**
      * The class constructor
      *
      * @param SymfonyStyle $ioStyle The Symfony Style Input/Output
+     * @param Config       $config  The configurations holder
      */
-    public function __construct(SymfonyStyle $ioStyle)
+    public function __construct(SymfonyStyle $ioStyle, Config $config)
     {
         $this->ioStyle = $ioStyle;
-    }
-
-    /**
-     * Check if all required data are provided
-     *
-     * @return void
-     *
-     * @throws \InvalidArgumentException
-     */
-    public function checkAllData()
-    {
-        $errors = array();
-        if ('' == $this->getStubFile()) {
-            $errors[] = 'The stub file is missing.';
-        }
-        if ('' == $this->getOutputDir()) {
-            $errors[] = 'The output directory is missing';
-        }
-        if ('' == $this->getPharName()) {
-            $errors[] = 'The name of the phar is missing';
-        }
-        if ($this->getComposerReader() === null || '' == $this->composerReader->getComposerJsonPath()) {
-            $errors[] = 'The composer.json file is missing';
-        }
-
-        if (count($errors) > 0) {
-            throw new \InvalidArgumentException(implode(PHP_EOL, $errors));
-        }
+        $this->config  = $config;
     }
 
     /**
@@ -327,8 +197,6 @@ class PharBuilder
      */
     public function buildPhar()
     {
-        $this->checkAllData();
-
         $startTime = time();
 
         $this->ioStyle->title('Creating your Phar application...');
@@ -338,23 +206,23 @@ class PharBuilder
         $this->ioStyle->success('composer.json analysed');
 
         // Unlink, otherwise we just add things to the already existing phar
-        if (file_exists($this->pharName)) {
-            unlink($this->pharName);
+        if (file_exists($this->getPharPath())) {
+            unlink($this->getPharPath());
         }
 
         chdir(dirname($this->composerReader->getComposerJsonPath()));
 
         $this->phar = new \Phar(
-            $this->pharName,
+            $this->getPharPath(),
             \FilesystemIterator::CURRENT_AS_FILEINFO | \FilesystemIterator::KEY_AS_FILENAME,
-            $this->alias
+            $this->getPharName()
         );
         $this->phar->startBuffering();
 
-        $this->stubFile = $this->makePathRelative($this->stubFile);
+        $this->stubFile = $this->makePathRelative($this->getStubFile());
         $this->phar->setStub(
             (!$this->isSkipShebang() ? '#!/usr/bin/env php' . PHP_EOL : '') .
-            '<?php Phar::mapPhar(); include "phar://' . $this->alias . '/' . $this->stubFile .
+            '<?php Phar::mapPhar(); include "phar://' . $this->getPharName() . '/' . $this->stubFile .
             '"; __HALT_COMPILER(); ?>'
         );
 
@@ -372,7 +240,7 @@ class PharBuilder
             $this->addFakeFile($file);
         }
         // Add included directories
-        foreach ($this->includes as $dir) {
+        foreach ($this->getIncludes() as $dir) {
             $this->addDir($dir);
         }
         // Add the composer vendor dir
@@ -391,7 +259,7 @@ class PharBuilder
 
         $this->ioStyle->success(array(
             'Phar creation successful',
-            'File size: ' . $size->formatBinary(filesize($this->pharName)) . PHP_EOL .
+            'File size: ' . $size->formatBinary(filesize($this->getPharPath())?:0) . PHP_EOL .
             'Process duration: ' . $this->buildDuration($startTime, $endTime)
         ));
     }
@@ -403,6 +271,8 @@ class PharBuilder
      * @param int $end   end timestamp
      *
      * @return string
+     *
+     * @psalm-suppress InvalidArgument -- ReadableDuration constructor badly typed
      */
     protected function buildDuration($start, $end)
     {
@@ -440,13 +310,10 @@ class PharBuilder
             ->notName('*~')//Remove backup file
             ->notName('*.back')//Remove backup file
             ->notName('*.swp')//Remove backup file
-            ->notName('phpunit*')//Remove Unit test
-            ->exclude('Tests')//Remove Unit test
-            ->exclude('tests')//Remove Unit test
-            ->exclude('test')//Remove Unit test
-            ->exclude('docs')//Remove documentation
+            ->notName('*Spec.php')//Remove PhpSpec test file
+            ->notPath('/(^|\/)doc(s)?\//i')//Remove documentation
             ->notPath('/.*phpunit\/.*/')//Remove Unit test
-            ->notPath('/.*test(s)?\/.*/')//Remove Unit test
+            ->notPath('/(^|\/)test(s)?\/.*/i')//Remove Unit test
             ->exclude($excludes)
             ->in($directory);
         foreach ($files as $file) {
@@ -472,7 +339,7 @@ class PharBuilder
 
         // Remove shebang if present
         $shebang = "~^#!/(.*)\n~";
-        $stub    = preg_replace($shebang, '', $stub);
+        $stub    = preg_replace($shebang, '', $stub?:'');
 
         $this->phar->addFromString($this->stubFile, $stub);
         $this->compressFile($this->stubFile);
@@ -487,8 +354,8 @@ class PharBuilder
      */
     protected function makePathRelative($path)
     {
-        if (0 === strpos($path, getcwd())) {
-            $path = substr($path, strlen(getcwd()));
+        if (0 === strpos($path, getcwd()?:'./')) {
+            $path = substr($path, strlen(getcwd()?:'./'));
             $path = ltrim($path, DIRECTORY_SEPARATOR);
         }
 
@@ -521,10 +388,12 @@ class PharBuilder
      */
     protected function addFakeFile($filePath)
     {
+        $filePath = str_replace('/./', '/', $filePath);
+
         $this->ioStyle->write("\r\033[2K" . ' > ' . $filePath);
 
         //Add the file
-        $this->phar->addFromString($filePath, "");
+        $this->phar->addFromString($filePath, '');
     }
 
     /**
@@ -543,7 +412,7 @@ class PharBuilder
     protected function compressFile($file)
     {
         // Check is compression is enable, if it's not the case stop right away, don't need to go further
-        if (!in_array($this->compression, array(\Phar::BZ2, \Phar::GZ), true)) {
+        if (!in_array($this->getCompression(), array(\Phar::BZ2, \Phar::GZ), true)) {
             return;
         }
         // Some frequent text based file extension that can be compressed in a good rate
@@ -561,7 +430,7 @@ class PharBuilder
         }
 
         $this->ioStyle->write('...');
-        $this->phar[$file]->compress($this->compression);
+        $this->phar[$file]->compress($this->getCompression());
         $this->ioStyle->write(' <info>compressed</info>');
     }
 
@@ -581,18 +450,28 @@ class PharBuilder
      */
     protected function readComposerAutoload()
     {
-        $paths = $this->composerReader->getSourcePaths($this->keepDev);
+        $paths = $this->composerReader->getSourcePaths($this->isKeepDev());
 
         $paths['excludes'] = array();
         $paths['vendor']   = $this->composerReader->getVendorDir();
 
-        if (!$this->keepDev) {
+        if (!$this->isKeepDev()) {
             $paths['excludes'] = $this->composerReader->getDevOnlyPackageName();
         }
 
-        $paths["stubs"] = array_map(function ($file) use ($paths) {
-            return $paths['vendor'] . "/" . $file;
-        }, $this->composerReader->getStubFiles());
+        $paths['stubs'] = array_map(
+            /**
+             * Get the full path of a file
+             *
+             * @param string $file The file path
+             *
+             * @return string
+             */
+            function ($file) use ($paths) {
+                return $paths['vendor'] . '/' . $file;
+            },
+            $this->composerReader->getStubFiles()
+        );
 
         return $paths;
     }
