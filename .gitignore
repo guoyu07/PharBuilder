@@ -1,5 +1,6 @@
 # Created by .ignore support plugin (hsz.mobi)
 phar-builder.phar
+build/
 
 ### Composer template
 vendor/
